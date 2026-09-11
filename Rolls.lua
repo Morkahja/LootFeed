@@ -17,7 +17,8 @@ local function AddPlayer(r, name)
 end
 local function Changed(r) if notify then notify(r) end end
 local function Finish(r, status, winner)
-    if r.done then return end
+    -- A timeout is provisional: real results can still arrive afterwards.
+    if r.done and r.status ~= "Ended (result unavailable)" then return end
     r.done = true; r.status = status; r.winner = winner; r.finished = GetTime()
     Changed(r)
 end
@@ -102,6 +103,16 @@ function R.Message(message)
             for _, r in pairs(R.records) do
                 if r.key == key and not r.done then found=r; count=count+1 end
             end
+            -- Recover delayed results, or numbers delivered after the winner.
+            -- Never merge them into an arbitrary completed copy of the item.
+            if count == 0 and fmt.action ~= "choice" then
+                for _, r in pairs(R.records) do
+                    if r.key == key and r.done and GetTime()-r.finished <= 120
+                        and (r.status == "Ended (result unavailable)" or fmt.action == "number") then
+                        found=r; count=count+1
+                    end
+                end
+            end
             -- Vanilla chat carries an item link, not a roll ID. Never invent
             -- which identical simultaneous drop a player's message belongs to.
             if count > 1 then
@@ -127,8 +138,9 @@ function R.Event(ev, a, b)
     elseif ev == "CANCEL_LOOT_ROLL" then
         R.pending[a]=nil
         local r=R.records[a]
-        -- Cancellation also accompanies normal resolution: allow chat to arrive.
-        if r and not r.done then r.cancelAt=GetTime()+3 end
+        -- This closes the local roll prompt; it is NOT proof the group has
+        -- finished. Keep tracking until a result or the original roll deadline.
+        if r and not r.done then r.promptClosed=true end
     end
 end
 function R.Tick()
@@ -152,8 +164,7 @@ function R.Tick()
             end
         end
         if not r.done then
-            if r.cancelAt and now >= r.cancelAt then Finish(r,"Ended (result unavailable)")
-            elseif now >= r.deadline then Finish(r,"Ended (result unavailable)") end
+            if now >= r.deadline then Finish(r,"Ended (result unavailable)") end
         elseif now-r.finished > 300 then R.records[id]=nil end
     end
 end

@@ -175,7 +175,10 @@ local function RollChanged(roll)
         row.resolved=false
         table.insert(active,1,row); row:Show()
     end
-    if roll.done and not row.resolved then row.resolved=true; row.age=0.32 end
+    if roll.done and (not row.resolved or row.resultStatus~=roll.status or row.resultWinner~=roll.winner) then
+        row.resolved=true; row.age=0.32
+    end
+    row.resultStatus=roll.status; row.resultWinner=roll.winner
     Refresh(row)
     if hovered==row.dice then OctoLootRolls.Tooltip(roll,row.dice) end
 end
