@@ -78,12 +78,16 @@ local function Refresh(row)
     row.quest:SetText(quest and (ITEM_BIND_QUEST or "Quest Item") or "")
     row.label:ClearAllPoints()
     row.label:SetPoint("LEFT", row, "LEFT", 46, quest and 7 or 0)
+    row.label:SetWidth(row.roll and W-162 or W-96)
+    if row.roll then
+        row.dice:Show(); row.winner:SetText(row.roll.winner or (row.roll.done and "Ended" or "Rolling"))
+    else row.dice:Hide(); row.winner:SetText("") end
     local _, _, hex = string.find(row.link or "", "|c%x%x(%x%x%x%x%x%x)")
     local r, g, b = 0.92, 0.84, 0.62
     if hex then r = tonumber(string.sub(hex, 1, 2), 16)/255; g = tonumber(string.sub(hex, 3, 4), 16)/255; b = tonumber(string.sub(hex, 5, 6), 16)/255 end
     row.label:SetTextColor(r, g, b)
     row.edge:SetTexture(r, g, b, 0.9)
-    row.count:SetText(row.amount > 1 and ("x" .. row.amount) or "")
+    row.count:SetText(not row.roll and row.amount > 1 and ("x" .. row.amount) or "")
     row.cached = texture ~= nil or row.link == nil
 end
 local function MakeRow(index)
@@ -109,6 +113,27 @@ local function MakeRow(index)
     row.quest:SetTextColor(1, 0.82, 0.2)
     row.count = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.count:SetPoint("RIGHT", row, "RIGHT", -10, 0)
+    row.winner = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    row.winner:SetPoint("RIGHT", row, "RIGHT", -35, 0)
+    row.winner:SetWidth(70); row.winner:SetJustifyH("RIGHT")
+    row.dice = CreateFrame("Button", nil, row)
+    row.dice:SetWidth(24); row.dice:SetHeight(28)
+    row.dice:SetPoint("RIGHT", row, "RIGHT", -6, 0)
+    row.dice:EnableMouse(true)
+    -- Draw a five-pip die directly; no client-specific texture paths.
+    local die = row.dice:CreateTexture(nil,"ARTWORK")
+    die:SetWidth(18); die:SetHeight(18); die:SetPoint("CENTER",row.dice,"CENTER",0,0)
+    die:SetTexture(0.95,0.85,0.55,1)
+    for _, pos in ipairs({{-5,5},{5,5},{0,0},{-5,-5},{5,-5}}) do
+        local pip=row.dice:CreateTexture(nil,"OVERLAY")
+        pip:SetWidth(3); pip:SetHeight(3); pip:SetPoint("CENTER",row.dice,"CENTER",pos[1],pos[2])
+        pip:SetTexture(0.12,0.10,0.06,1)
+    end
+    row.dice:SetScript("OnEnter", function()
+        hovered=this
+        if row.roll then OctoLootRolls.Tooltip(row.roll,this) end
+    end)
+    row.dice:SetScript("OnLeave", function() hovered=nil; GameTooltip:Hide() end)
     row:SetScript("OnEnter", function()
         hovered = this
         if this.link then
@@ -131,14 +156,28 @@ end
 local function Insert()
     local entry = table.remove(queue, 1)
     local row
-    if table.getn(active) == LIMIT then
-        row = table.remove(active)
-    else
-        for _, candidate in ipairs(rows) do if not candidate.used then row = candidate; break end end
-    end
+    for _, candidate in ipairs(rows) do if not candidate.used then row = candidate; break end end
+    if not row then row=MakeRow(table.getn(rows)+1); table.insert(rows,row) end
+    row.roll=nil
     row.used = true; row.link = entry.link; row.text = entry.text; row.texture = entry.texture; row.amount = entry.amount or 1
     row.age = 0; row.y = 0; row.retry = 0
     Refresh(row); table.insert(active, 1, row); row:Show()
+end
+
+local function RollChanged(roll)
+    local row
+    for _, candidate in ipairs(active) do if candidate.roll == roll then row=candidate; break end end
+    if not row then
+        for _, candidate in ipairs(rows) do if not candidate.used then row=candidate; break end end
+        if not row then row=MakeRow(table.getn(rows)+1); table.insert(rows,row) end
+        row.used=true; row.roll=roll; row.link=roll.link; row.texture=roll.texture
+        row.text=nil; row.amount=roll.amount; row.age=0; row.y=0; row.retry=0
+        row.resolved=false
+        table.insert(active,1,row); row:Show()
+    end
+    if roll.done and not row.resolved then row.resolved=true; row.age=0.32 end
+    Refresh(row)
+    if hovered==row.dice then OctoLootRolls.Tooltip(roll,row.dice) end
 end
 
 anchor:SetWidth(W*COMPACT_SCALE); anchor:SetHeight(22); anchor:SetMovable(true); anchor:SetClampedToScreen(true)
@@ -171,6 +210,7 @@ root:SetScript("OnEvent", function()
         local keys = {"LOOT_ITEM_SELF", "LOOT_ITEM_SELF_MULTIPLE", "LOOT_ITEM_PUSHED_SELF", "LOOT_ITEM_PUSHED_SELF_MULTIPLE", "LOOT_ITEM_CREATED_SELF", "LOOT_ITEM_CREATED_SELF_MULTIPLE"}
         for _, key in ipairs(keys) do local p = Compile(getglobal(key)); if p then table.insert(patterns, p) end end
         for i = 1, LIMIT do rows[i] = MakeRow(i) end
+        OctoLootRolls.Init(RollChanged)
         Place(); Lock(true); ready = true
         -- Vanilla has no ChatFrame_AddMessageEventFilter. Chain its handler.
         local previous = ChatFrame_OnEvent
@@ -181,22 +221,28 @@ root:SetScript("OnEvent", function()
                 return previous(e)
             end
         end
-    elseif ready and event == "CHAT_MSG_LOOT" and Personal(arg1) then
-        local _, _, link = string.find(arg1, "(|c%x+|Hitem:.-|h.-|h|r)")
-        if link then
-            local _, _, amount = string.find(arg1, "|h|r[xX](%d+)")
-            Enqueue({link=link, amount=tonumber(amount) or 1})
+    elseif ready and event == "CHAT_MSG_LOOT" then
+        OctoLootRolls.Event(event,arg1,arg2)
+        if Personal(arg1) then
+            local _, _, link = string.find(arg1, "(|c%x+|Hitem:.-|h.-|h|r)")
+            if link then
+                local _, _, amount = string.find(arg1, "|h|r[xX](%d+)")
+                Enqueue({link=link, amount=tonumber(amount) or 1})
+            end
         end
     elseif ready and event == "CHAT_MSG_MONEY" then
         Enqueue({text=arg1, texture=MoneyIcon(arg1), amount=1})
+    elseif ready then OctoLootRolls.Event(event,arg1,arg2)
     end
 end)
 root:RegisterEvent("ADDON_LOADED"); root:RegisterEvent("CHAT_MSG_LOOT"); root:RegisterEvent("CHAT_MSG_MONEY")
+root:RegisterEvent("START_LOOT_ROLL"); root:RegisterEvent("CANCEL_LOOT_ROLL")
 
 root:SetScript("OnUpdate", function()
     if not ready then return end
     local dt = arg1 or 0
     clock = clock + dt
+    OctoLootRolls.Tick()
     if demo and clock >= demo.next then
         local sample = demo.items[demo.index]
         Enqueue(sample); demo.index = demo.index + 1; demo.next = clock + 0.7
@@ -207,12 +253,16 @@ root:SetScript("OnUpdate", function()
     for i = table.getn(active), 1, -1 do
         local row = active[i]
         row.age = row.age + dt
-        if row.age >= OctoLootDB.duration + 0.7 then
+        if row.roll and not row.roll.done then row.age=math.min(row.age,0.32) end
+        local lifetime=row.roll and 15 or OctoLootDB.duration
+        if row.age >= lifetime + 0.7 then
             row:Hide(); row.used = false; table.remove(active, i)
         end
     end
     if table.getn(queue) > 0 and clock >= nextInsert then
-        local oldest = active[LIMIT]
+        local oldest, ordinary = nil, 0
+        for _, row in ipairs(active) do if not row.roll then ordinary=ordinary+1; oldest=row end end
+        if ordinary < LIMIT then oldest=nil end
         if oldest then
             oldest.age = math.max(oldest.age, OctoLootDB.duration)
         else
@@ -223,7 +273,8 @@ root:SetScript("OnUpdate", function()
         local target = (i-1)*(H+GAP)*COMPACT_SCALE*(OctoLootDB.direction == "up" and 1 or -1)
         row.y = row.y + (target-row.y)*math.min(1, dt*12)
         local entrance = math.min(1, row.age/0.32)
-        local fade = math.max(0, math.min(1, (row.age-OctoLootDB.duration)/0.7))
+        local lifetime=row.roll and 15 or OctoLootDB.duration
+        local fade = math.max(0, math.min(1, (row.age-lifetime)/0.7))
         row.holder:ClearAllPoints(); row.holder:SetPoint("TOPRIGHT", anchor, "BOTTOMRIGHT", 0, row.y-GAP*COMPACT_SCALE)
         row:SetScale(COMPACT_SCALE*(1-0.12*(1-entrance)^3))
         row:SetAlpha(entrance*(1-fade))
@@ -241,6 +292,7 @@ SlashCmdList["OCTOLOOT"] = function(message)
     local _, _, command, value = string.find(string.lower(message or ""), "^%s*(%S*)%s*(.-)%s*$")
     if command == "unlock" then Lock(false); Say("Drag the green handle, then /oloot lock.")
     elseif command == "lock" then Lock(true)
+    elseif command == "testroll" then OctoLootRolls.Demo(); Say("Group-roll preview: hover the dice to watch choices and the result.")
     elseif command == "test" then
         demo = {index=1, next=clock, items={
             {link="|cffffffff|Hitem:2589:0:0:0|h[Linen Cloth]|h|r", amount=3},
@@ -255,6 +307,6 @@ SlashCmdList["OCTOLOOT"] = function(message)
     elseif command == "direction" and (value == "up" or value == "down") then OctoLootDB.direction = value
     elseif command == "chat" and (value == "on" or value == "off") then OctoLootDB.mute = value == "off"; Say("Personal item loot in chat: " .. value)
     elseif command == "reset" then for k,v in pairs(defaults) do OctoLootDB[k] = v end; Place(); Lock(false)
-    else Say("/oloot unlock | lock | test | scale 1 | duration 6 | direction up/down | chat on/off | reset") end
+    else Say("/oloot unlock | lock | test | testroll | scale 1 | duration 6 | direction up/down | chat on/off | reset") end
 end
 

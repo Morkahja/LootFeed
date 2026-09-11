@@ -2,8 +2,9 @@
 ## Title: Octo Loot
 ## Notes: Animated, movable personal loot feed for Vanilla / OctoWoW.
 ## Author: Local
-## Version: 0.1.5
+## Version: 0.2.0
 ## SavedVariables: OctoLootDB
 
+Rolls.lua
 OctoLoot.lua
 
