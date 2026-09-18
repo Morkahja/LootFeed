@@ -1,6 +1,6 @@
 -- Group roll tracking for Vanilla 1.12. No modern loot-history API required.
-OctoLootRolls = { records = {}, formats = {}, pending = {} }
-local R = OctoLootRolls
+LootFeedRolls = { records = {}, formats = {}, pending = {} }
+local R = LootFeedRolls
 local notify
 local function Key(link)
     local _, _, key = string.find(link or "", "|H(item:.-)|h")

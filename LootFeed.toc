@@ -1,0 +1,10 @@
+## Interface: 11200
+## Title: Loot Feed
+## Notes: Animated, movable personal loot feed for World of Warcraft 1.12.
+## Author: Local
+## Version: 0.2.2
+## SavedVariables: LootFeedDB
+
+Rolls.lua
+LootFeed.lua
+
